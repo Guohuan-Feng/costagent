@@ -338,6 +338,18 @@ def schedule_tasks(scheduler_input: Dict[str, Any]) -> List[BaseMessage]:
                 tool_messages.append(AIMessage(content=f"⏳ Start: [{_idx}] {_name}"))
                 schedule_task.invoke(dict(task=_task, observations=observations))
                 obs = observations[_idx]
+
+                # --- START MODIFICATION: PRINT FUNCTION MESSAGE ---
+                print(f"\n===== 📝 FunctionMessage (idx={_idx}, tool={_name}) =====")
+                # 尝试漂亮打印 JSON 内容
+                try:
+                    pretty_content = json.dumps(json.loads(str(obs)), indent=2, ensure_ascii=False)
+                    print(pretty_content)
+                except:
+                    print(str(obs))
+                print("====================================================\n")
+                # --- END MODIFICATION ---
+
                 tool_messages.append(FunctionMessage(
                     name=_name, content=str(obs),
                     additional_kwargs={"idx": _idx, "args": task["args"]},
@@ -431,7 +443,15 @@ def plan_and_schedule(state):
 
     # ✅ 保留你的 planner 思考记录逻辑
     raw = planner_raw.invoke(messages)
-    thought_text = extract_thought(getattr(raw, "content", ""))
+    raw_content = getattr(raw, "content", "")
+    
+    # --- START MODIFICATION: PRINT PLANNER AIMESSAGE ---
+    print("\n===== 🧠 Planner AIMessage (Thought/Action) =====")
+    print(raw_content)
+    print("================================================\n")
+    # --- END MODIFICATION ---
+
+    thought_text = extract_thought(raw_content)
     if thought_text:
         messages = messages + [AIMessage(content=f"Thought: {thought_text}")]
 
@@ -486,8 +506,16 @@ def build_join_parser_with_context():
         if hasattr(action, "json_output"):
             result = action.json_output
             if isinstance(result, dict) and "total_cost" in result:
+                
+                # --- START MODIFICATION: PRINT JOINER AIMESSAGE ---
+                final_json_content = json.dumps(result, indent=2, ensure_ascii=False)
+                print("\n===== 💰 Joiner AIMessage (Final Cost JSON) =====")
+                print(final_json_content)
+                print("==================================================\n")
+                # --- END MODIFICATION ---
+                
                 msgs = [
-                    AIMessage(content=json.dumps(result, ensure_ascii=False)),
+                    AIMessage(content=final_json_content),
                     SystemMessage(content=JOIN_SENTINEL),
                 ]
                 return {"messages": msgs}
@@ -556,12 +584,12 @@ def _extract_alloy_code_from_messages(messages) -> str:
         return "Alloy"
 
 def extract_long_output_from_text(text: str) -> str:
-    """
-    兼容 llm 生成的三引号格式：
-    long_output=\"\"\" ... \"\"\"
-    并剥离外层代码块 ```...```
-    """
-    # 先找 long_output="""
+
+    # 兼容 llm 生成的三引号格式：
+    # long_output=""" ... """
+    # 并剥离外层代码块 ```...```
+
+    # 先找 long_output=""" 
     pat = re.compile(r'long_output\s*=\s*"""\n?(.*?)"""', re.DOTALL)
     m = pat.search(text)
     if not m:
@@ -580,7 +608,6 @@ def extract_long_output_from_text(text: str) -> str:
 
 import uuid, os, json
 from datetime import datetime
-from azure.storage.blob import BlobClient, ContentSettings
 
 def save_json_report(state):
     """
@@ -598,7 +625,7 @@ def save_json_report(state):
                 break
 
     # ✅ 保存回 state，确保后续可以用
-    state["user_inputs"] = user_inputs    
+    state["user_inputs"] = user_inputs     
     final_json = None
 
     # 1️⃣ 找到包含 total_cost 的最终 JSON 输出
@@ -657,31 +684,10 @@ def save_json_report(state):
     print(f"[INFO] ✅ 已生成长 JSON: {long_path}")
     print(f"[INFO] ✅ 已生成短 JSON: {short_path}")
 
-    from azure.storage.blob import BlobClient
-
-    container_sas_url = (
-        "https://stxchinacwe2edev.blob.core.chinacloudapi.cn/mat?"
-        "sp=racwd&st=2025-10-29T02:56:01Z&se=2025-11-04T11:11:01Z&"
-        "skoid=85cc4c22-1860-4056-a7b5-2e7dfe684afc&sktid=6a596574-1518-4214-840e-216bb42592e7&"
-        "skt=2025-10-29T02:56:01Z&ske=2025-11-04T11:11:01Z&sks=b&skv=2024-11-04&spr=https&"
-        "sv=2024-11-04&sr=c&sig=uY0MO4eozVkIZPUc8ru%2BSC2C8NaKo3MI3uEIZhdVkoo%3D"
-    )
-
-    def upload_to_azure(local_file: str, blob_subdir: str):
-        try:
-            left, _, qs = container_sas_url.partition("?")
-            blob_name = f"rates/{blob_subdir}/{os.path.basename(local_file)}"
-            blob_url = f"{left.rstrip('/')}/{blob_name}?{qs}"
-            blob = BlobClient.from_blob_url(blob_url)
-            with open(local_file, "rb") as f:
-                blob.upload_blob(f, overwrite=True)
-            print(f"✅ 上传成功: {local_file} → {blob_name}")
-        except Exception as e:
-            print(f"❌ 上传失败 {local_file}: {e}")
-
-    print("🚀 正在上传至 Azure Blob Storage ...")
-    upload_to_azure(long_path, "Detailed_Material_Rate")
-    upload_to_azure(short_path, "Brief_Material_Rate")
+    # ----------------------------------------
+    # 删除了 Azure Blob Storage 上传相关代码
+    # ----------------------------------------
+    
     # ============== ✅ 保存到 CSV ==============
     try:
         # 提取 state 中的字段
@@ -742,10 +748,11 @@ def parse_user_inputs_from_query(query: str) -> dict:
     """
     ✅ 从 query 中提取 key=value 对 (支持逗号、空格、多字段)
     ✅ 返回字典，例如：
-       {"Location": "Ningbo, Zhejiang", "supplier_code": "97036203", ...}
+      {"Location": "Ningbo, Zhejiang", "supplier_code": "97036203", ...}
     """
     result = {}
     pairs = re.findall(r'(\w+)\s*=\s*([^;]+)', query)
     for key, val in pairs:
         result[key.strip()] = val.strip()
     return result
+
